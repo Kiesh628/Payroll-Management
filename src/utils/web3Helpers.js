@@ -52,3 +52,23 @@ export const executePayment = async (signer, address, amount) => {
   });
   return tx.hash;
 };
+
+export const checkBalance = async (address) => {
+  if (!window.ethereum) {
+    throw new Error('MetaMask is not installed');
+  }
+  const provider = new ethers.BrowserProvider(window.ethereum);
+  const balance = await provider.getBalance(address);
+  return ethers.formatEther(balance);
+};
+
+export const estimateBatchGas = async (signer, sampleAddress, sampleAmount, count) => {
+  const feeData = await signer.provider.getFeeData();
+  const gasPrice = feeData.gasPrice || 20000000000n;
+  const gasLimit = await signer.estimateGas({
+    to: sampleAddress,
+    value: ethers.parseEther(sampleAmount),
+  });
+  const totalGasWei = gasLimit * gasPrice * BigInt(count);
+  return ethers.formatEther(totalGasWei);
+};

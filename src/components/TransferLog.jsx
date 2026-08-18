@@ -21,6 +21,19 @@ export default function TransferLog({ logs }) {
     }
   };
 
+  const handleExport = () => {
+    const textContent = logs.map(log => `[${log.timestamp}] ${log.status.toUpperCase()} | ${log.text} | ${log.txHash || 'N/A'}`).join('\n');
+    const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', 'cyber-pay-audit-log.txt');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="terminal-card">
       <h2 className="terminal-card-title">Transfer Logs & Audit Trail</h2>
@@ -56,6 +69,13 @@ export default function TransferLog({ logs }) {
           ))
         )}
       </div>
+      {logs.length > 0 && (
+        <div style={{ textAlign: 'right', marginTop: '15px' }}>
+          <button className="neon-text-button" onClick={handleExport}>
+            DOWNLOAD AUDIT LOG
+          </button>
+        </div>
+      )}
     </div>
   );
 }

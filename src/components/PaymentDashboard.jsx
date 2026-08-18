@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { connectWallet, executePayment } from '../utils/web3Helpers';
+import React, { useState, useEffect, useRef } from 'react';
+import { connectWallet, executePayment, checkBalance, estimateBatchGas } from '../utils/web3Helpers';
 
 export default function PaymentDashboard({ 
   parsedData, 
@@ -12,6 +12,35 @@ export default function PaymentDashboard({
 }) {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
+  const [walletBalance, setWalletBalance] = useState('0.0');
+  const [estimatedGas, setEstimatedGas] = useState('0.0');
+  const [completedCount, setCompletedCount] = useState(0);
+  const isAborted = useRef(false);
+
+  useEffect(() => {
+    const runPreFlight = async () => {
+      if (!walletAddress || !signer) return;
+      try {
+        const bal = await checkBalance(walletAddress);
+        setWalletBalance(bal);
+        if (parsedData.length > 0) {
+          const sample = parsedData[0];
+          const gas = await estimateBatchGas(
+            signer,
+            sample.address,
+            sample.amount,
+            parsedData.length
+          );
+          setEstimatedGas(gas);
+        } else {
+          setEstimatedGas('0.0');
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    runPreFlight();
+  }, [walletAddress, parsedData, signer]);
 
   const handleConnect = async () => {
     setIsConnecting(true);
@@ -39,9 +68,17 @@ export default function PaymentDashboard({
     }
 
     setIsExecuting(true);
+    setCompletedCount(0);
+    isAborted.current = false;
     addLog("Starting batch payroll processing...", 'pending');
 
-    for (const item of parsedData) {
+    for (let i = 0; i < parsedData.length; i++) {
+      if (isAborted.current) {
+        addLog("EXECUTION ABORTED BY USER", 'error');
+        break;
+      }
+
+      const item = parsedData[i];
       const { address, amount } = item;
       const shortAddress = `${address.slice(0, 6)}...${address.slice(-4)}`;
       const logId = addLog(`Sending ${amount} ETH to ${shortAddress}`, 'pending');
@@ -54,13 +91,20 @@ export default function PaymentDashboard({
         const errorMsg = err.reason || err.message || 'Transaction rejected';
         updateLog(logId, 'error', null, ` [Failed: ${errorMsg}]`);
       }
+
+      setCompletedCount(i + 1);
     }
-    addLog("Batch payroll execution finished.", 'success');
+
+    if (!isAborted.current) {
+      addLog("Batch payroll execution finished.", 'success');
+    }
     setIsExecuting(false);
   };
 
   const totalWallets = parsedData.length;
-  const totalETH = parsedData.reduce((sum, item) => sum + Number(item.amount), 0).toFixed(4);
+  const totalETH = parsedData.reduce((sum, item) => sum + Number(item.amount), 0);
+  const totalRequiredWithGas = totalETH + Number(estimatedGas);
+  const insufficientFunds = walletAddress && parsedData.length > 0 && (Number(walletBalance) < totalRequiredWithGas);
 
   return (
     <div className="terminal-card purple">
@@ -91,17 +135,52 @@ export default function PaymentDashboard({
         </div>
         <div className="stat-box">
           <div className="stat-label">Total Required</div>
-          <div className="stat-value">{totalETH} ETH</div>
+          <div className="stat-value">{totalETH.toFixed(4)} ETH</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Wallet Balance</div>
+          <div className="stat-value">{Number(walletBalance).toFixed(4)} ETH</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Est. Gas Cost</div>
+          <div className="stat-value">{Number(estimatedGas).toFixed(6)} ETH</div>
         </div>
       </div>
 
-      <button 
-        className="neon-button-red" 
-        onClick={handleExecute}
-        disabled={isExecuting || parsedData.length === 0 || !walletAddress}
-      >
-        {isExecuting ? 'EXECUTING BATCH...' : 'EXECUTE PAYROLL'}
-      </button>
+      {insufficientFunds && (
+        <div className="text-error">INSUFFICIENT FUNDS</div>
+      )}
+
+      {isExecuting && (
+        <>
+          <div className="progress-container">
+            <div 
+              className="progress-fill" 
+              style={{ width: `${parsedData.length > 0 ? (completedCount / parsedData.length) * 100 : 0}%` }}
+            ></div>
+          </div>
+          <div style={{ textAlign: 'center', marginBottom: '15px', fontSize: '0.85rem' }}>
+            PROGRESS: {completedCount} / {parsedData.length} COMPLETED
+          </div>
+        </>
+      )}
+
+      {isExecuting ? (
+        <button 
+          className="neon-button-warning" 
+          onClick={() => { isAborted.current = true; }}
+        >
+          ABORT SEQUENCE
+        </button>
+      ) : (
+        <button 
+          className="neon-button-red" 
+          onClick={handleExecute}
+          disabled={parsedData.length === 0 || !walletAddress || insufficientFunds}
+        >
+          EXECUTE PAYROLL
+        </button>
+      )}
     </div>
   );
 }
